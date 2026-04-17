@@ -1,0 +1,751 @@
+---
+title: "In_class_activity_Week12"
+author: "Kurt"
+date: "4/15/2026"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Activity 2
+
+First, the factorization strategy and the Gibbs sampler both rely on conditional distributions. 
+
+In the factorization strategy, the joint density is:
+
+$$
+f(x_1,\dots,x_d)
+=
+f_1(x_1)\,f_2(x_2\mid x_1)\cdots f_d(x_d\mid x_1,\dots,x_{d-1}),
+$$
+
+and then sample the variables sequentially:
+
+$$
+x_1 \sim f_1(x_1), \quad
+x_2 \sim f_2(x_2\mid x_1), \quad \dots, \quad
+x_d \sim f_d(x_d\mid x_1,\dots,x_{d-1}).
+$$
+
+
+Iterative runs produce independent samples drawn from the distribution.
+
+For Gibbs sampler, it repeatedly samples from the conditional distributions of each variable given the current values of the others:
+
+$$
+x_1^{(t+1)} \sim f(x_1 \mid x_2^{(t)},\dots,x_d^{(t)}),
+$$
+Thus, Gibbs sampling generates a Markov chain. 
+
+
+To conclude, the samples from factorization strategy in non-MC samplers are independent draws, while the samples from MCMC-style methods are dependent. Therefore, each draw in non-MC sampling is a true sample from the target distribution, while a draw in MCMC needs to wait till convergence to be a true sample. And iterative non-MC methods still need marginal distributions while MCMC only needs conditional distribution. (approximately) What's more, the factorization strategy is direct and exact when the needed marginals and conditionals are feasible, whereas Gibbs sampling is an approximation method for when direct factorization-based sampling is not feasible. 
+
+---
+
+
+## Activity 3
+
+The linear regression model is
+
+$$
+Y_i = \beta_0 + \mathbf{x}_i^\top \boldsymbol{\beta} + \varepsilon_i,
+\quad \varepsilon_i \overset{\text{iid}}{\sim} N(0, 1).
+$$
+
+Since $\varepsilon_i = Y_i - \beta_0 - \mathbf{x}_i^\top \boldsymbol{\beta}$ and $\varepsilon_i \sim N(0,1)$, each observation conditioned on the parameters and data can be written as follows:
+
+$$
+Y_i \mid \beta_0, \boldsymbol{\beta}, \mathbf{x}_i
+\sim N\!\left(\beta_0 + \mathbf{x}_i^\top \boldsymbol{\beta},\; 1\right).
+$$
+
+The likelihood for a single observation is therefore:
+
+$$
+L_i(\beta_0, \boldsymbol{\beta})
+= \varphi\!\big(Y_i - \beta_0 - \mathbf{x}_i^\top \boldsymbol{\beta}\big)
+= \frac{1}{\sqrt{2\pi}}
+  \exp\!\left(-\frac{1}{2}
+  (Y_i - \beta_0 - \mathbf{x}_i^\top \boldsymbol{\beta})^2\right),
+$$
+
+where $\varphi(\cdot)$ is the standard normal PDF.
+
+For $n$ independent observations, the full likelihood is the product:
+
+$$
+L(\beta_0, \boldsymbol{\beta})
+= \prod_{i=1}^{n}
+  \varphi\!\big(Y_i - \beta_0 - \mathbf{x}_i^\top \boldsymbol{\beta}\big)
+= (2\pi)^{-n/2}
+  \exp\!\left(-\frac{1}{2}
+  \sum_{i=1}^{n}
+  (Y_i - \beta_0 - \mathbf{x}_i^\top \boldsymbol{\beta})^2\right).
+$$
+---
+
+
+## Activity 4
+
+- Function to implement $f_1$
+
+```{r}
+rf1 <- function(n) {
+  # The CDF of standard normal at 0 is 0.5.
+  # We sample uniformly from [0.5, 1] to restrict to positive values
+  u <- runif(n, min = pnorm(0), max = 1)
+  
+  # inverse CDF map back to the normal scale using the quantile function
+  beta0_samples <- qnorm(u)
+  
+  return(beta0_samples)
+}
+
+# verify
+xf1 <- rf1(10000)
+hist(xf1, prob = TRUE, breaks = 40,
+     main = "Samples from f1",
+     xlab = expression(beta[0]))
+curve(2 * dnorm(x), from = 0, to = max(xf1), add = TRUE, lwd = 2)
+```
+
+- Function to implement $f_2$:
+
+First we need to see that the density is $f_2(\boldsymbol{\beta} | \beta_0) \propto e^{-\prod_{j=1}^{p} |\beta_j - \beta_0| - \max_{j=1,\dots,p} |\beta_j - \beta_0|}$ and then the log density is $\log(f_2(\boldsymbol{\beta} | \beta_0)) \propto -\prod_{j=1}^{p} |\beta_j - \beta_0| - \max_{j=1,\dots,p} |\beta_j - \beta_0|$
+
+```{r}
+df2 <- function(beta, beta0, log = FALSE) {
+  # bunch of guardrails
+  if (!is.numeric(beta) || length(beta) < 1) {
+    stop("beta must be a numeric vector.")
+  }
+  if (!is.numeric(beta0) || length(beta0) != 1) {
+    stop("beta0 must be a numeric scalar.")
+  }
+  if (!is.logical(log) || length(log) != 1) {
+    stop("log must be TRUE or FALSE.")
+  }
+  
+  # Calculate absolute differences between the vector beta and scalar beta0
+  diffs <- abs(beta - beta0)
+  
+  # Calculate the log density
+  log_density <- -prod(diffs) - max(diffs)
+  
+  if (log) {
+    return(log_density)
+  } else {
+    return(exp(log_density))
+  }
+}
+```
+
+Now, we plot the density of $f_2$, for a 2-dimensional $\mathbf{\beta}$:
+
+```{r}
+# 1. beta0 is arbitrary for plotting density so just set it to 0
+beta0 <- 0
+
+# 2. Create a grid of values for beta1 and beta2
+beta <- seq(-3, 3, length.out = 150)
+
+# 3. Calculate the density z-values over the grid
+z_matrix <- outer(beta, beta, Vectorize(function(b1, b2) {
+  df2(beta = c(b1, b2), beta0 = beta0, log = FALSE)
+}))
+
+# 4. plot the shape of the density
+filled.contour(x = beta, 
+               y = beta, 
+               z = z_matrix,
+               color.palette = function(n) hcl.colors(n, "YlOrRd", rev = TRUE),
+               xlab = expression(beta[1]),
+               ylab = expression(beta[2]),
+               main = expression(paste("Density of ", f[2], " given ", beta[0], " = 0")),
+               plot.axes = {
+                 axis(1); axis(2)
+                 # Add reference lines intersecting at beta0
+                 abline(h = beta0, v = beta0, col = "black", lty = 2)
+               })
+```
+We can see the "star" shape of the density.
+
+---
+
+## Activity 5
+
+- Step 1: Updating $\beta_0$
+
+The full conditional of $\beta_0$ given $\boldsymbol{\beta}$ is:
+
+$$p(\beta_0 \mid \boldsymbol{\beta}) \propto f_1(\beta_0) \cdot f_2(\boldsymbol{\beta} \mid \beta_0).$$
+
+We propose $\beta_0^* \sim f_1$. The MH acceptance ratio is:
+
+$$\alpha = \frac{\pi(\beta_0^*)}{\pi(\beta_0)} \cdot \frac{q(\beta_0 \mid \beta_0^*)}{q(\beta_0^* \mid \beta_0)}$$
+
+$$= \frac{f_1(\beta_0^*) \cdot f_2(\boldsymbol{\beta} \mid \beta_0^*)}{f_1(\beta_0) \cdot f_2(\boldsymbol{\beta} \mid \beta_0)} \cdot \frac{f_1(\beta_0)}{f_1(\beta_0^*)}$$
+
+, because the proposal doesn't depend on the current value, $q(\beta_0 \mid \beta_0^*) = f_1(\beta_0)$ and $q(\beta_0^* \mid \beta_0) = f_1(\beta_0^*)$. So the $f_1$ terms cancel:
+
+$$\alpha = \frac{f_2(\boldsymbol{\beta} \mid \beta_0^*)}{f_2(\boldsymbol{\beta} \mid \beta_0)}$$
+
+- Step 2: Updating $\boldsymbol{\beta}$
+
+The full conditional of $\boldsymbol{\beta}$ given $\beta_0$ is $f_2(\boldsymbol{\beta} \mid \beta_0)$. We propose $\boldsymbol{\beta}^* = \boldsymbol{\beta}^{(t)} + \boldsymbol{\epsilon}$, where $\boldsymbol{\epsilon} \sim N(\mathbf{0}, \sigma^2 I)$. Because this is a normal disrtibution centered at 0 and is symmetric, the acceptance ratio simplifies to:
+
+$$\alpha = \frac{f_2(\boldsymbol{\beta}^* \mid \beta_0)}{f_2(\boldsymbol{\beta} \mid \beta_0)}$$
+Now we implement it:
+
+```{r}
+# 
+gibbs_sampler <- function(n_iter, p, sigma_prop = 1, burn_in = 1000) {
+  # Storage
+  beta0_samples <- numeric(n_iter)
+  beta_samples  <- matrix(0, nrow = n_iter, ncol = p)
+
+  # Initialize
+  beta0 <- rf1(1)
+  beta  <- rnorm(p)
+
+  accept_beta0 <- 0
+  accept_beta  <- 0
+
+  for (i in 1:n_iter) {
+    # -----------------------------------------------
+    # sample from p(beta0 | beta) using MH
+    beta0_star <- rf1(1)
+    log_alpha  <- df2(beta, beta0_star, log = TRUE) -
+                  df2(beta, beta0,      log = TRUE)
+    if (log(runif(1)) < log_alpha) {
+      beta0 <- beta0_star
+      accept_beta0 <- accept_beta0 + 1
+    }
+    # -----------------------------------------------
+    
+    # -----------------------------------------------
+    # sample from (beta | beta0) using random walk MH
+    beta_star <- beta + rnorm(p, 0, sigma_prop)
+    log_alpha <- df2(beta_star, beta0, log = TRUE) -
+                 df2(beta,      beta0, log = TRUE)
+    if (log(runif(1)) < log_alpha) {
+      beta <- beta_star
+      accept_beta <- accept_beta + 1
+    }
+    # -----------------------------------------------
+
+    beta0_samples[i] <- beta0
+    beta_samples[i, ] <- beta
+  }
+
+  cat("beta0 acceptance rate:", accept_beta0 / n_iter, "\n")
+  cat("beta  acceptance rate:", accept_beta  / n_iter, "\n")
+
+  list(beta0 = beta0_samples[-(1:burn_in)],
+       beta  = beta_samples[-(1:burn_in), ])
+}
+```
+
+```{r}
+gibbs_samples <- gibbs_sampler(n_iter = 20000, p = 2, sigma_prop = 1.5)
+```
+
+```{r}
+par(mfrow = c(3, 1))
+plot(gibbs_samples$beta0,    type = "l", main = "beta0 trace",
+     ylab = expression(beta[0]), col = "steelblue")
+plot(gibbs_samples$beta[,1], type = "l", main = "beta1 trace",
+     ylab = expression(beta[1]), col = "steelblue")
+plot(gibbs_samples$beta[,2], type = "l", main = "beta2 trace",
+     ylab = expression(beta[2]), col = "steelblue")
+```
+```{r}
+par(mfrow = c(1, 1))
+plot(gibbs_samples$beta[,1], gibbs_samples$beta[,2], pch = ".", col = rgb(0, 0, 0, 0.2),
+     xlab = expression(beta[1]), ylab = expression(beta[2]),
+     main = "Joint samples of (beta1, beta2)")
+```
+
+---
+
+## Activity 6
+
+The $f_2$ density is
+$$
+f_2(\boldsymbol{\beta} \mid \beta_0)\propto
+\exp\!\left(
+-\prod_{j=1}^{p}|\beta_j-\beta_0|
+-\max_{j=1,\dots,p}|\beta_j-\beta_0|
+\right).
+$$
+
+Hence the potential function is
+$$
+U_{f_2}(\boldsymbol{\beta})
+=
+-\log f_2(\boldsymbol{\beta};\beta_0)
+=
+\prod_{j=1}^{p}|\beta_j-\beta_0|
++
+\max_{j=1,\dots,p}|\beta_j-\beta_0|,
+$$
+We now compute the subgradient with respect to $\beta_k$.
+
+Recall that for the one-norm,
+$$
+\frac{\partial}{\partial \beta_j}|\beta_j-\beta_0|
+=
+\begin{cases}
+\operatorname{sign}(\beta_j-\beta_0), & \beta_j\neq \beta_0,\\[6pt]
+[-1,1], & \beta_j=\beta_0.
+\end{cases}
+$$
+
+Let
+$$
+P(\boldsymbol{\beta})=\prod_{j=1}^{p}|\beta_j-\beta_0|.
+$$
+Then
+$$
+\frac{\partial P}{\partial \beta_k}
+=
+\begin{cases}
+\displaystyle
+\left(\prod_{j\neq k}|\beta_j-\beta_0|\right)\operatorname{sign}(\beta_k-\beta_0),
+& \beta_k\neq \beta_0,\\[10pt]
+\displaystyle
+\left(\prod_{j\neq k}|\beta_j-\beta_0|\right)[-1,1],
+& \beta_k=\beta_0.
+\end{cases}
+$$
+
+Next, let
+$$
+M(\boldsymbol{\beta})=\max_{j=1,\dots,p}|\beta_j-\beta_0|.
+$$
+Assume first that the maximizing index is unique, say
+$$
+k^*=\arg\max_j |\beta_j-\beta_0|.
+$$
+Then
+$$
+\frac{\partial M}{\partial \beta_k}
+=
+\begin{cases}
+\displaystyle
+\operatorname{sign}(\beta_k-\beta_0), & k=k^* \text{ and } \beta_k\neq \beta_0,\\[6pt]
+\displaystyle
+[-1,1], & k=k^* \text{ and } \beta_k=\beta_0,\\[6pt]
+0, & k\neq k^*.
+\end{cases}
+$$
+
+Equivalently, this can be written as
+$$
+\frac{\partial M}{\partial \beta_k}
+=
+\begin{cases}
+\displaystyle
+\mathbf{1}\!\left\{\,|\beta_k-\beta_0|\ge \max_{j'}|\beta_{j'}-\beta_0|\,\right\}
+\operatorname{sign}(\beta_k-\beta_0),
+& \beta_k\neq \beta_0,\\[10pt]
+\displaystyle
+\mathbf{1}\!\left\{\,|\beta_k-\beta_0|\ge \max_{j'}|\beta_{j'}-\beta_0|\,\right\}
+[-1,1],
+& \beta_k=\beta_0.
+\end{cases}
+$$
+
+Therefore, adding the two parts together, we obtain
+$$
+\frac{\partial U}{\partial \beta_k}
+=
+\begin{cases}
+\displaystyle
+\left(\prod_{j\neq k}|\beta_j-\beta_0|\right)\operatorname{sign}(\beta_k-\beta_0)
++
+\mathbf{1}\!\left\{\,|\beta_k-\beta_0|\ge \max_{j'}|\beta_{j'}-\beta_0|\,\right\}
+\operatorname{sign}(\beta_k-\beta_0),
+& \beta_k\neq \beta_0,\\[12pt]
+\displaystyle
+\left(\prod_{j\neq k}|\beta_j-\beta_0|\right)[-1,1]
++
+\mathbf{1}\!\left\{\,|\beta_k-\beta_0|\ge \max_{j'}|\beta_{j'}-\beta_0|\,\right\}
+[-1,1],
+& \beta_k=\beta_0.
+\end{cases}
+$$
+
+As $\beta_s \to \beta_0$, the $\text{sign}(\beta_s - \beta_0)$ factor jumps from $-1$ to $+1$. The gradient does not pass smoothly through zero.
+
+At exactly $\beta_s = \beta_0$, the gradient is not defined as a single value:
+
+$$
+\frac{\partial U}{\partial \beta_s}
+\in \left[\prod_{j \neq s}|\beta_j - \beta_0|
++ \mathbf{1}\!\left\{0
+  \geq \max_{j'}|\beta_{j'} - \beta_0|\right\}\right]
+\cdot [-1, 1]
+$$
+
+Since $|\beta_s - \beta_0| = 0$ cannot be the max, the indicator becomes 0 and this simplifies to:
+
+$$
+\frac{\partial U}{\partial \beta_s}
+\in \prod_{j \neq s}|\beta_j - \beta_0| \cdot [-1, 1]
+$$
+
+We then can see that the potential $U$ has a V-shaped ridge along for $\beta_s = \beta_0$. The slope is positive on one side and negative on the other, with no well-defined slope at the peak. So it bounces back when trying to cross the center line. The sampler gets trapped along the V-shaped ridge of the axes. This explains why the resulting probability density has a star shape.
+
+---
+
+## Activity 7
+
+First, we implement the potential function
+
+```{r}
+set.seed(123)
+
+# ============================================================
+# 1. IMPLEMENTATION: POTENTIAL, GRADIENT, LEAPFROG, HMC, MH
+# ============================================================
+
+potential_f2 <- function(beta, beta0) {
+  diffs <- abs(beta - beta0)
+  prod(diffs) + max(diffs)
+}
+
+grad_potential <- function(beta, beta0) {
+  p <- length(beta)
+  diffs <- abs(beta - beta0)
+  signs <- sign(beta - beta0)
+  grad <- numeric(p)
+  for (s in 1:p) {
+    prod_term <- prod(diffs[-s]) * signs[s]
+    max_term <- ifelse(diffs[s] >= max(diffs), 1, 0) * signs[s]
+    grad[s] <- prod_term + max_term
+  }
+  grad
+}
+```
+
+Now implement the 
+```{r}
+#' Leapfrog Integrator for HMC
+#' 
+#' The integrator needs to be tuned by the step-size (`epsilon`) and the number of steps (`L`).
+#' This simulates frictionless motion: Energy is roughly conserved.
+#'
+#' @param beta Starting position
+#' @param momentum Starting momentum (auxiliary variable)
+#' @param beta_0 Center of the distribution
+#' @param stepsize step size
+#' @param numsteps Number of steps to simulate
+#' @return A list containing the proposed state and proposed momentum
+leapfrog <- function(beta, momentum, beta_0, stepsize, numsteps) {
+  # Start with a half-step for the momentum.
+  # !!! This needs an implementation of the gradient of the potential energy function !!!
+  momentum <- momentum - 0.5 * stepsize * grad_potential(beta, beta_0)
+  
+  # Now we run the simulation for numsteps steps
+  for (i in 1:numsteps) {
+    # Update Position
+    beta <- beta + stepsize * momentum
+    
+    # Update Momentum (full step)
+    # *Important: Skip the momentum update on the final step.*
+    if (i < numsteps) {
+      momentum <- momentum - stepsize * grad_potential(beta, beta_0)
+    }
+  }
+  
+  # Make a final half-step for momentum to finish
+  momentum <- momentum - 0.5 * stepsize * grad_potential(beta, beta_0)
+  
+  # Return the proposed state (x, r)
+  list(beta = beta, momentum = momentum)
+}
+
+#' Hamiltonian Monte Carlo Sampler
+#'
+#' @param n Number of MCMC iterations
+#' @param init Starting vector
+#' @param beta_0 center of the distribution
+#' @param stepsize The leapfrog step size
+#' @param numsteps The number of leapfrog steps
+#' @return A matrix of samples
+run_HMC <- function(n, init, beta_0, stepsize, numsteps) {
+  # For performance, we want to first initialize the memory
+  p <- length(init)
+  chain <- matrix(NA_real_, nrow = n, ncol = p)
+  chain[1, ] <- init
+  accept_count <- 0
+  
+  # --- MAIN MCMC LOOP ---
+  for (t in 2:n) {
+    beta <- chain[t - 1, ]
+    
+    # --- 1. PROPOSE MOMENTUM ---
+    # Draw new auxiliary momentum, e.g., from a standard Normal N(0, I)
+    momentum <- rnorm(p)
+    
+    # --- 2. EVALUATE CURRENT HAMILTONIAN ENERGY ---
+    # Kinetic K = 0.5 * sum(momentum^2)
+    # Potential U = potential_f2(beta)
+    current_H <- potential_f2(beta, beta_0) + 0.5 * sum(momentum^2)
+    
+    # --- 3. RUN SIMULATION (Leapfrog) ---
+    proposed <- leapfrog(beta, momentum, beta_0, stepsize, numsteps)
+
+    # --- 4. EVALUATE PROPOSED ENERGY ---
+    proposed_H <- potential_f2(proposed$beta, beta_0) +
+      0.5 * sum(proposed$momentum^2)
+    
+    # --- 5. METROPOLIS ACCEPT/REJECT STEP ---
+    # Compute acceptance probability
+    accept_prob <- min(1, exp(current_H - proposed_H))
+    
+    if (runif(1) < accept_prob) {
+      chain[t, ] <- proposed$beta
+      accept_count <- accept_count + 1
+    } else {
+      chain[t, ] <- beta
+    }
+  }
+  
+  structure(chain,
+            acceptance_rate = accept_count / n)
+}
+
+# MH code for comparison
+run_MH <- function(n, init, beta_0, sigma_prop = 0.05) {
+  p <- length(init)
+  chain <- matrix(NA_real_, nrow = n, ncol = p)
+  chain[1, ] <- init
+  accept <- 0
+  for (t in 2:n) {
+    beta <- chain[t - 1, ]
+    beta_star <- beta + rnorm(p, 0, sigma_prop)
+    log_alpha <- df2(beta_star, beta_0, log = TRUE) -
+                 df2(beta, beta_0, log = TRUE)
+    if (log(runif(1)) < log_alpha) {
+      chain[t, ] <- beta_star
+      accept <- accept + 1
+    } else {
+      chain[t, ] <- beta
+    }
+  }
+  structure(chain, acceptance_rate = accept / n)
+}
+```
+
+```{r}
+# ============================================================
+# 2. RUN ALL 12 HMC EXPERIMENTS + 1 MH
+# ============================================================
+
+beta_0   <- 0
+n_iter   <- 5000
+init_far  <- c(3, 1e-3)
+init_near <- c(1e-3, 1e-3)
+
+eps_vals <- c(0.05, 0.1, 0.5)
+L_vals   <- c(10, 500)
+
+# Store results in named lists
+far_results  <- list()
+near_results <- list()
+
+for (eps in eps_vals) {
+  for (L in L_vals) {
+    label <- paste0("eps", eps, "_L", L)
+    far_results[[label]]  <- run_HMC(n_iter, init_far,  beta_0, eps, L)
+    near_results[[label]] <- run_HMC(n_iter, init_near, beta_0, eps, L)
+  }
+}
+
+res_mh  <- run_MH(n_iter, init_far, beta_0, sigma_prop = 0.5)
+res_hmc_best <- far_results[["eps0.05_L10"]]
+
+# ============================================================
+# 3. PRINTED ACCEPTANCE RATE TABLE
+# ============================================================
+
+cat("============================================================\n")
+cat("          ACCEPTANCE RATE TABLE (all 12 HMC runs)           \n")
+cat("============================================================\n")
+cat(sprintf("%-12s | %-10s | %-10s | %-10s\n",
+            "", "eps=0.05", "eps=0.1", "eps=0.5"))
+cat("------------------------------------------------------------\n")
+
+for (L in L_vals) {
+  far_rates <- sapply(eps_vals, function(e) {
+    round(attr(far_results[[paste0("eps", e, "_L", L)]], "acceptance_rate"), 4)
+  })
+  near_rates <- sapply(eps_vals, function(e) {
+    round(attr(near_results[[paste0("eps", e, "_L", L)]], "acceptance_rate"), 4)
+  })
+  cat(sprintf("Far,  L=%-3d | %-10s | %-10s | %-10s\n",
+              L, far_rates[1], far_rates[2], far_rates[3]))
+  cat(sprintf("Near, L=%-3d | %-10s | %-10s | %-10s\n",
+              L, near_rates[1], near_rates[2], near_rates[3]))
+  cat("------------------------------------------------------------\n")
+}
+
+cat("\nMH  acceptance rate:", round(attr(res_mh, "acceptance_rate"), 4), "\n")
+cat("HMC (best) acc rate:", round(attr(res_hmc_best, "acceptance_rate"), 4), "\n")
+```
+
+First we observe that the far start $(3, 1e{-3})$ and near start $(1e{-3}, 1e{-3})$ produce similar acceptance rates and sample distributions across all (eps, L) settings. However there far start seems to slightly decrease the acceptance rate. So the chain forgets its initialization quickly.
+
+We also find small step sizes help with the acceptance a lot: With $\varepsilon = 0.05$ or $0.1$, HMC achieves high acceptance rates (74--98%) for both $L = 10$ and $L = 500$. As step size increases to 0.5, the results drop significantly.
+
+We also see a negative correlation between $L$ and acceptance rate too: for $\varepsilon = 0.5$ and $L = 500$, the acceptance rate drops to near zero, and essentially every proposal is rejected. 
+
+Below we can see the samples from each scenario and they confirm our observations of the acceptance rates.
+
+```{r}
+# ============================================================
+# 4. PLOT 1: FAR START — 2x3 SCATTER GRID
+# ============================================================
+
+old_par <- par(no.readonly = TRUE)
+par(mfrow = c(2, 3), mar = c(4, 4, 3, 1))
+
+for (L in L_grid) {
+  for (eps in eps_grid) {
+    key <- paste("far", "eps", eps, "L", L, sep = "_")
+    ch  <- results[[key]]$chain
+    acc <- results[[key]]$acceptance_rate
+    plot(
+      ch[, 1], ch[, 2],
+      pch = 16, cex = 0.35,
+      xlab = expression(beta[1]), ylab = expression(beta[2]),
+      main = paste0("Far start: eps=", eps, ", L=", L,
+                     "\nacc=", round(acc, 3))
+    )
+    abline(h = 0, v = 0, lty = 3, col = "gray60")
+  }
+}
+
+# ============================================================
+# 5. PLOT 2: NEAR START — 2x3 SCATTER GRID
+# ============================================================
+
+par(mfrow = c(2, 3), mar = c(4, 4, 3, 1))
+
+for (L in L_grid) {
+  for (eps in eps_grid) {
+    key <- paste("near", "eps", eps, "L", L, sep = "_")
+    ch  <- results[[key]]$chain
+    acc <- results[[key]]$acceptance_rate
+    plot(
+      ch[, 1], ch[, 2],
+      pch = 16, cex = 0.35,
+      xlab = expression(beta[1]), ylab = expression(beta[2]),
+      main = paste0("Near start: eps=", eps, ", L=", L,
+                     "\nacc=", round(acc, 3))
+    )
+    abline(h = 0, v = 0, lty = 3, col = "gray60")
+  }
+}
+```
+
+```{r}
+# ============================================================
+# 6. PLOT 3: TRACE PLOTS — GOOD vs FROZEN
+# ============================================================
+
+good_far_key  <- "far_eps_0.1_L_500"
+bad_far_key   <- "far_eps_0.5_L_500"
+good_near_key <- "near_eps_0.1_L_500"
+bad_near_key  <- "near_eps_0.5_L_500"
+
+par(mfrow = c(2, 2), mar = c(4, 4, 3, 1))
+
+plot(
+  results[[good_far_key]]$chain[, 1], type = "l",
+  xlab = "Iteration", ylab = expression(beta[1]),
+  main = paste0("Good mixing: far start\nHMC eps=0.1, L=500, acc=",
+                round(results[[good_far_key]]$acceptance_rate, 3))
+)
+plot(
+  results[[bad_far_key]]$chain[, 1], type = "l",
+  xlab = "Iteration", ylab = expression(beta[1]),
+  main = paste0("Frozen chain: far start\nHMC eps=0.5, L=500, acc=",
+                round(results[[bad_far_key]]$acceptance_rate, 3))
+)
+plot(
+  results[[good_near_key]]$chain[, 1], type = "l",
+  xlab = "Iteration", ylab = expression(beta[1]),
+  main = paste0("Good mixing: near start\nHMC eps=0.1, L=500, acc=",
+                round(results[[good_near_key]]$acceptance_rate, 3))
+)
+plot(
+  results[[bad_near_key]]$chain[, 1], type = "l",
+  xlab = "Iteration", ylab = expression(beta[1]),
+  main = paste0("Frozen chain: near start\nHMC eps=0.5, L=500, acc=",
+                round(results[[bad_near_key]]$acceptance_rate, 3))
+)
+```
+
+The trace plots confirm a frozen chain for combinations of very large step size and $L$.
+
+
+```{r}
+# ============================================================
+# 7. PLOT 4: MH vs BEST-TUNED HMC
+# ============================================================
+# Try several MH proposal SDs to find the best one
+cat("\n========================================\n")
+cat("TUNING MH: trying different proposal SDs\n")
+cat("========================================\n")
+for (sd in c(0.5, 1.0, 1.5, 2.0)) {
+  mh_test <- run_MH(n_iter, starts$far, beta_0, sigma_prop = sd)
+  cat(sprintf("  proposal_sd = %.1f  =>  acceptance = %.3f\n",
+              sd, attr(mh_test, "acceptance_rate")))
+}
+
+# Use the best MH setting for final comparison
+mh_chain <- run_MH(n_iter, starts$far, beta_0, sigma_prop = 1.0)
+mh_acc   <- attr(mh_chain, "acceptance_rate")
+
+best_hmc_key   <- "far_eps_0.1_L_500"
+best_hmc_chain <- results[[best_hmc_key]]$chain
+best_hmc_acc   <- results[[best_hmc_key]]$acceptance_rate
+
+cat("\n========================================\n")
+cat("MH vs HMC COMPARISON\n")
+cat("========================================\n")
+cat("  MH  acceptance rate:", round(mh_acc, 4), "\n")
+cat("  HMC acceptance rate:", round(best_hmc_acc, 4), "\n")
+
+par(mfrow = c(1, 2), mar = c(4, 4, 3, 1))
+
+plot(
+  mh_chain[, 1], mh_chain[, 2],
+  pch = 16, cex = 0.35,
+  xlab = expression(beta[1]), ylab = expression(beta[2]),
+  main = paste0("Random-walk MH\nacc=", round(mh_acc, 3))
+)
+abline(h = 0, v = 0, lty = 3, col = "gray60")
+
+plot(
+  best_hmc_chain[, 1], best_hmc_chain[, 2],
+  pch = 16, cex = 0.35,
+  xlab = expression(beta[1]), ylab = expression(beta[2]),
+  main = paste0("Best-tuned HMC: eps=0.1, L=500\nacc=",
+                round(best_hmc_acc, 3))
+)
+abline(h = 0, v = 0, lty = 3, col = "gray60")
+```
+
+
+From the results, we can see that with proper tuning ($\varepsilon = 0.1$, $L = 500$), HMC achieves higher acceptance (~76%) than random walk MH (~49%) with step size of 1.0 and both capture the star-shaped distribution. 
+
+Based on the mechanisms of both algorithms, for this star-shaped distribution, well-tuned HMC and MH both are valid choices. HMC can perform better because it can move across the state space more efficiently and capture the global star-shaped geometry with fewer random-walk effects. However, this advantage is valid only when the HMC step size is well-tuned. When the step size is too large, HMC fails badly because the leapfrog accumulates large energy errors near the ridges $\beta_0$, leading to near-zero acceptance. By contrast, MH is more robust to the lack of smoothness, but it explores the target more slowly due to random-walk behavior.
+
+
+---
